@@ -30,6 +30,14 @@ class ToneProfile:
             f"常见情绪/表情标记：{emojis}；常见句末：{endings}；口语化比例≈{self.informal_ratio:.2f}。"
         )
 
+    def to_owner_prompt(self) -> str:
+        endings = "、".join(self.common_endings) if self.common_endings else ""
+        emojis = "、".join(self.emoji_token_top) if self.emoji_token_top else ""
+        return (
+            f"你的语言特征（必须严格遵守）：平均长度≈{self.avg_len:.1f}；标点密度≈{self.punctuation_ratio:.2f}；"
+            f"常见情绪/表情标记：{emojis}；常见句末：{endings}；口语化比例≈{self.informal_ratio:.2f}。"
+        )
+
 
 def build_tone_profile(texts: list[str]) -> ToneProfile:
     if not texts:

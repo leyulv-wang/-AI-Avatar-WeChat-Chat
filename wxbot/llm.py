@@ -35,6 +35,19 @@ class OllamaProvider(LLMProvider):
     def __init__(self, *, base_url: str, model: str):
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self, timeout_sec: int) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_sec))
+        else:
+            self._client.timeout = httpx.Timeout(timeout_sec)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def generate_candidates(self, *, prompt: str, count: int, timeout_sec: int) -> list[str]:
         instruction = (
@@ -49,11 +62,10 @@ class OllamaProvider(LLMProvider):
                 {"role": "user", "content": prompt},
             ],
         }
-        timeout = httpx.Timeout(timeout_sec)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(f"{self._base_url}/api/chat", json=payload)
-            resp.raise_for_status()
-            data = resp.json()
+        client = self._get_client(timeout_sec)
+        resp = await client.post(f"{self._base_url}/api/chat", json=payload)
+        resp.raise_for_status()
+        data = resp.json()
         content = (((data or {}).get("message") or {}).get("content"))
         if not isinstance(content, str):
             return []
@@ -73,6 +85,19 @@ class OpenAICompatibleProvider(LLMProvider):
         self._api_key = api_key
         self._model = model
         self._chat_path = _strip_wrapping_quotes(chat_completions_path) if chat_completions_path else None
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self, timeout_sec: int) -> httpx.AsyncClient:
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(timeout_sec))
+        else:
+            self._client.timeout = httpx.Timeout(timeout_sec)
+        return self._client
+
+    async def close(self) -> None:
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     def _endpoint(self) -> str:
         if self._chat_path:
@@ -116,15 +141,14 @@ class OpenAICompatibleProvider(LLMProvider):
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        timeout = httpx.Timeout(timeout_sec)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(self._endpoint(), json=payload, headers=headers)
-            if resp.status_code >= 400:
-                detail = resp.text
-                if isinstance(detail, str) and len(detail) > 800:
-                    detail = detail[:800] + "..."
-                raise RuntimeError(f"LLM 请求失败 HTTP {resp.status_code}: {detail}")
-            data = resp.json()
+        client = self._get_client(timeout_sec)
+        resp = await client.post(self._endpoint(), json=payload, headers=headers)
+        if resp.status_code >= 400:
+            detail = resp.text
+            if isinstance(detail, str) and len(detail) > 800:
+                detail = detail[:800] + "..."
+            raise RuntimeError(f"LLM 请求失败 HTTP {resp.status_code}: {detail}")
+        data = resp.json()
 
         choices = (data or {}).get("choices") if isinstance(data, dict) else None
         if isinstance(choices, list) and choices:

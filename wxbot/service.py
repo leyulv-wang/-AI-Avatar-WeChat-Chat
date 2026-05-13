@@ -39,14 +39,11 @@ class BotService:
         self._context_messages = max(1, context_messages)
         self._reply_timeout_sec = max(1, reply_timeout_sec)
         self._cache_max_messages = max(1, cache_max_messages)
+        self._owner_profile: ToneProfile | None = None
 
     def _events_store(self, contact_id: str) -> EncryptedJSONLStore:
         paths = get_contact_paths(self._data_dir, contact_id, encrypt=self._storage_encrypt)
         return EncryptedJSONLStore(paths.events_path, self._fernet)
-
-    def _profile_store(self, contact_id: str) -> EncryptedJSONStore:
-        paths = get_contact_paths(self._data_dir, contact_id, encrypt=self._storage_encrypt)
-        return EncryptedJSONStore(paths.profile_path, self._fernet)
 
     def _role_store(self, contact_id: str) -> EncryptedJSONStore:
         paths = get_contact_paths(self._data_dir, contact_id, encrypt=self._storage_encrypt)
@@ -59,6 +56,42 @@ class BotService:
     def _assistants_store(self) -> EncryptedJSONStore:
         p = self._data_dir / ("assistants.json.enc" if self._storage_encrypt else "assistants.json")
         return EncryptedJSONStore(p, self._fernet)
+
+    def _owner_profile_store(self) -> EncryptedJSONStore:
+        p = self._data_dir / ("owner_profile.json.enc" if self._storage_encrypt else "owner_profile.json")
+        return EncryptedJSONStore(p, self._fernet)
+
+    def ensure_owner_profile(self) -> ToneProfile:
+        if self._owner_profile is not None:
+            return self._owner_profile
+        raw = self._owner_profile_store().read()
+        if raw and isinstance(raw.get("tone"), dict):
+            try:
+                self._owner_profile = ToneProfile(**raw["tone"])
+                return self._owner_profile
+            except Exception:
+                pass
+        profile = self.recompute_owner_profile()
+        return profile
+
+    def recompute_owner_profile(self) -> ToneProfile:
+        texts: list[str] = []
+        contacts_root = self._data_dir / "contacts"
+        if contacts_root.exists():
+            for p in contacts_root.iterdir():
+                if not p.is_dir():
+                    continue
+                events = self._events_store(p.name).tail(200)
+                for e in events:
+                    if e.get("direction") == "outbound" and isinstance(e.get("content"), str) and e["content"].strip():
+                        texts.append(e["content"].strip())
+        profile = build_tone_profile(texts[-500:] if texts else [])
+        self._owner_profile = profile
+        self._owner_profile_store().write({"tone": profile.__dict__})
+        return profile
+
+    def get_owner_profile(self) -> ToneProfile | None:
+        return self._owner_profile
 
     def list_assistants(self) -> list[RoleConfig]:
         raw = self._assistants_store().read() or {}
@@ -277,7 +310,7 @@ class BotService:
         role = self.get_assistant(selected_id) if selected_id else None
         if role is None:
             role = self.get_role(msg.contact_id)
-        profile = self.get_profile(msg.contact_id)
+        owner_profile = self.get_owner_profile()
         context = self.get_recent_texts(msg.contact_id, limit=self._context_messages)
         if len(context) < self._context_messages:
             more = await self._try_fetch_weflow_context(
@@ -287,14 +320,9 @@ class BotService:
             merged = [t for t in (more + context) if t]
             context = merged[-self._context_messages :]
 
-        if profile is None:
-            base_texts = self.get_recent_texts(msg.contact_id, limit=200)
-            profile = build_tone_profile(base_texts)
-            self._profile_store(msg.contact_id).write({"tone": profile.__dict__})
-
         prompt = _build_prompt(
             role=role,
-            profile=profile,
+            owner_profile=owner_profile,
             context=context,
             incoming=msg.content,
         )
@@ -412,33 +440,19 @@ class BotService:
             return RoleConfig()
         return RoleConfig.model_validate(raw)
 
-    def recompute_profile(self, contact_id: str) -> ToneProfile:
-        texts = self.get_recent_texts(contact_id, limit=200)
-        profile = build_tone_profile(texts)
-        self._profile_store(contact_id).write({"tone": profile.__dict__})
-        return profile
 
-    def get_profile(self, contact_id: str) -> ToneProfile | None:
-        raw = self._profile_store(contact_id).read()
-        if not raw:
-            return None
-        tone = raw.get("tone") if isinstance(raw, dict) else None
-        if not isinstance(tone, dict):
-            return None
-        try:
-            return ToneProfile(**tone)
-        except Exception:
-            return None
+def _build_prompt(*, role: RoleConfig, owner_profile: ToneProfile | None, context: list[str], incoming: str) -> str:
+    owner_block = ""
+    if owner_profile:
+        owner_block = owner_profile.to_owner_prompt() + "\n"
 
-
-def _build_prompt(*, role: RoleConfig, profile: ToneProfile | None, context: list[str], incoming: str) -> str:
-    role_block = f"角色设定：{role.name}\n"
+    role_block = f"角色增量设定：{role.name}\n"
     if getattr(role, "system_prompt", ""):
         role_block += f"系统提示词：{role.system_prompt}\n"
     else:
         role_block += (
-            f"性格特征：{role.personality}\n"
-            f"语言风格：{role.language_style}\n"
+            f"性格增量：{role.personality}\n"
+            f"语言风格增量：{role.language_style}\n"
             f"专业知识：{role.expertise}\n"
         )
     if role.constraints:
@@ -446,11 +460,10 @@ def _build_prompt(*, role: RoleConfig, profile: ToneProfile | None, context: lis
     if role.example_replies:
         role_block += "示例回复：\n" + "\n".join(f"- {x}" for x in role.example_replies[:5]) + "\n"
 
-    profile_block = profile.to_prompt() + "\n" if profile else ""
     context_block = "\n".join(f"- {t}" for t in context[-20:])
     return (
+        f"{owner_block}"
         f"{role_block}"
-        f"{profile_block}"
         "最近对话（按时间）：\n"
         f"{context_block}\n"
         "对方最新消息：\n"

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     wxbot_context_messages: int = 20
     wxbot_candidate_count: int = 4
-    wxbot_reply_timeout_sec: int = 5
+    wxbot_reply_timeout_sec: int = 15
 
     wxbot_cache_max_messages: int = 200
 

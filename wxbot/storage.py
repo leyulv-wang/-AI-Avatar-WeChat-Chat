@@ -15,7 +15,6 @@ from cryptography.fernet import Fernet
 class ContactPaths:
     contact_dir: Path
     events_path: Path
-    profile_path: Path
     role_path: Path
     state_path: Path
 
@@ -38,7 +37,6 @@ def get_contact_paths(data_dir: Path, contact_id: str, *, encrypt: bool = True) 
     return ContactPaths(
         contact_dir=contact_dir,
         events_path=contact_dir / ("events.jsonl.enc" if encrypt else "events.jsonl"),
-        profile_path=contact_dir / ("profile.json.enc" if encrypt else "profile.json"),
         role_path=contact_dir / ("role.json.enc" if encrypt else "role.json"),
         state_path=contact_dir / ("state.json.enc" if encrypt else "state.json"),
     )

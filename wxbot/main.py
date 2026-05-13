@@ -78,6 +78,7 @@ service = BotService(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    service.ensure_owner_profile()
     scheduler = start_scheduler(service)
     listener_task = None
     if weflow.sse_url():
@@ -293,10 +294,16 @@ async def set_selected_assistant(contact_id: str, body: dict) -> dict:
     return {"status": "ok"}
 
 
-@app.post("/api/contacts/{contact_id}/profile/recompute")
-async def recompute_profile(contact_id: str) -> dict:
-    profile = service.recompute_profile(contact_id)
+@app.post("/api/owner-profile/recompute")
+async def recompute_owner_profile() -> dict:
+    profile = service.recompute_owner_profile()
     return {"data": profile.__dict__}
+
+
+@app.get("/api/owner-profile")
+async def get_owner_profile() -> dict:
+    profile = service.get_owner_profile()
+    return {"data": profile.__dict__ if profile else None}
 
 
 @app.get("/api/contacts/{contact_id}/role")

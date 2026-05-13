@@ -77,7 +77,7 @@ def test_role_roundtrip(tmp_path):
         mainmod.service._data_dir = old_service_dir
 
 
-def test_profile_recompute(tmp_path):
+def test_owner_profile_recompute(tmp_path):
     old_data_dir = mainmod.data_dir
     old_service_dir = mainmod.service._data_dir
     try:
@@ -86,7 +86,7 @@ def test_profile_recompute(tmp_path):
 
         c = TestClient(mainmod.app)
         c.post("/weflow/webhook", json={"contact_id": "wxid_test", "content": "哈哈可以。"})
-        r = c.post("/api/contacts/wxid_test/profile/recompute")
+        r = c.post("/api/owner-profile/recompute")
         assert r.status_code == 200
         assert "avg_len" in r.json()["data"]
     finally:
